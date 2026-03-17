@@ -7,7 +7,9 @@ import sys
 import tempfile
 import zipfile
 import importlib
+import json
 from dataclasses import dataclass
+from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from typing import Dict, TypedDict, Optional
@@ -16,6 +18,7 @@ from importlib.metadata import version
 
 import requests
 from typing_extensions import NotRequired
+import folder_paths
 
 from utils.install_util import get_missing_requirements_message, get_required_packages_versions
 
@@ -184,6 +187,119 @@ class FrontendManager:
     CUSTOM_FRONTENDS_ROOT = str(Path(__file__).parents[1] / "web_custom_versions")
 
     @classmethod
+    def _template_library_config_path(cls) -> Path:
+        return Path(folder_paths.get_user_directory()) / "default" / "template_library.json"
+
+    @classmethod
+    def _load_template_library_config(cls) -> dict:
+        config_path = cls._template_library_config_path()
+        if not config_path.exists():
+            return {}
+        try:
+            with config_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            logging.warning("Failed to load template library config '%s': %s", config_path, exc)
+            return {}
+
+    @classmethod
+    def _build_local_templates_override(cls, cfg: dict) -> tuple[Optional[str], Dict[str, str]]:
+        if not cfg.get("templates_override_enabled", False):
+            return None, {}
+
+        library_root = Path(
+            cfg.get("library_root")
+            or (Path(folder_paths.get_user_directory()) / "default" / "template_library")
+        )
+        if not library_root.exists() or not library_root.is_dir():
+            return None, {}
+
+        categories_cfg = cfg.get("categories") if isinstance(cfg.get("categories"), list) else []
+        category_entries: list[tuple[dict, Path]] = []
+
+        if categories_cfg:
+            for entry in categories_cfg:
+                if not isinstance(entry, dict):
+                    continue
+                name = str(entry.get("name") or "").strip()
+                if not name:
+                    continue
+                rel = str(entry.get("path") or name).strip()
+                category_dir = (library_root / rel).resolve()
+                if category_dir.exists() and category_dir.is_dir():
+                    category_entries.append((entry, category_dir))
+        else:
+            for category_dir in sorted(p for p in library_root.iterdir() if p.is_dir()):
+                category_entries.append(({"name": category_dir.name}, category_dir))
+
+        assets: Dict[str, str] = {}
+        index_payload = []
+
+        for entry, category_dir in category_entries:
+            category_name = str(entry.get("name") or category_dir.name)
+            category_group = str(entry.get("group") or category_name.upper())
+            icon = str(entry.get("icon") or "icon-[lucide--folder]")
+            templates = []
+
+            for workflow_path in sorted(category_dir.glob("*.json")):
+                template_id = (
+                    f"local-{category_name.lower().replace(' ', '-')}-"
+                    f"{workflow_path.stem.lower().replace(' ', '-')}"
+                )
+                assets[f"{template_id}.json"] = str(workflow_path)
+                assets[template_id] = str(workflow_path)
+
+                media_subtype = "webp"
+                for preview in (
+                    workflow_path.with_suffix(".webp"),
+                    workflow_path.with_suffix(".png"),
+                    workflow_path.with_suffix(".jpg"),
+                ):
+                    if preview.exists():
+                        media_subtype = preview.suffix.lower().lstrip(".") or media_subtype
+                        assets[f"{template_id}.{media_subtype}"] = str(preview)
+                        break
+
+                templates.append(
+                    {
+                        "name": template_id,
+                        "title": workflow_path.stem.replace("_", " "),
+                        "description": str(entry.get("description") or "Local template"),
+                        "mediaType": "image",
+                        "mediaSubtype": media_subtype,
+                        "date": datetime.fromtimestamp(workflow_path.stat().st_mtime).strftime("%Y-%m-%d"),
+                        "openSource": True,
+                        "usage": 0,
+                        "size": workflow_path.stat().st_size,
+                        "vram": 0,
+                    }
+                )
+
+            index_payload.append(
+                {
+                    "moduleName": "local",
+                    "category": category_group,
+                    "icon": icon,
+                    "title": category_name,
+                    "type": "image",
+                    "isEssential": bool(entry.get("isEssential", True)),
+                    "templates": templates,
+                }
+            )
+
+        if not index_payload:
+            return None, assets
+
+        generated_dir = Path(folder_paths.get_user_directory()) / "default" / "template_library"
+        generated_dir.mkdir(parents=True, exist_ok=True)
+        generated_index = generated_dir / "index.generated.json"
+        with generated_index.open("w", encoding="utf-8") as f:
+            json.dump(index_payload, f, indent=2)
+
+        return str(generated_index), assets
+
+    @classmethod
     def get_required_frontend_version(cls) -> str:
         """Get the required frontend package version."""
         return get_required_frontend_version()
@@ -224,14 +340,20 @@ comfyui-frontend-package is not installed.
     @classmethod
     def template_asset_map(cls) -> Optional[Dict[str, str]]:
         """Return a mapping of template asset names to their absolute paths."""
-        try:
-            from comfyui_workflow_templates import (
-                get_asset_path,
-                iter_templates,
-            )
-        except ImportError:
-            logging.error(
-                f"""
+        asset_map: Dict[str, str] = {}
+
+        cfg = cls._load_template_library_config()
+        prune_templates_menu = bool(cfg.get("prune_templates_menu", False))
+
+        if not prune_templates_menu:
+            try:
+                from comfyui_workflow_templates import (
+                    get_asset_path,
+                    iter_templates,
+                )
+            except ImportError:
+                logging.error(
+                    f"""
 ********** ERROR ***********
 
 comfyui-workflow-templates is not installed.
@@ -240,25 +362,30 @@ comfyui-workflow-templates is not installed.
 
 ********** ERROR ***********
 """.strip()
-            )
-            return None
+                )
+                return None
 
-        try:
-            template_entries = list(iter_templates())
-        except Exception as exc:
-            logging.error(f"Failed to enumerate workflow templates: {exc}")
-            return None
+            try:
+                template_entries = list(iter_templates())
+            except Exception as exc:
+                logging.error(f"Failed to enumerate workflow templates: {exc}")
+                return None
 
-        asset_map: Dict[str, str] = {}
-        try:
-            for entry in template_entries:
-                for asset in entry.assets:
-                    asset_map[asset.filename] = get_asset_path(
-                        entry.template_id, asset.filename
-                    )
-        except Exception as exc:
-            logging.error(f"Failed to resolve template asset paths: {exc}")
-            return None
+            try:
+                for entry in template_entries:
+                    for asset in entry.assets:
+                        asset_map[asset.filename] = get_asset_path(
+                            entry.template_id, asset.filename
+                        )
+            except Exception as exc:
+                logging.error(f"Failed to resolve template asset paths: {exc}")
+                return None
+
+        local_index_path, local_assets = cls._build_local_templates_override(cfg)
+        if local_assets:
+            asset_map.update(local_assets)
+        if local_index_path:
+            asset_map["index.json"] = local_index_path
 
         if not asset_map:
             logging.error("No workflow template assets found. Did the packages install correctly?")

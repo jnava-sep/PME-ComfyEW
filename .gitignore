@@ -5,7 +5,13 @@ __pycache__/
 !/input/example.png
 /models/
 /temp/
-/custom_nodes/
+/custom_nodes/ComfyUI-Data-Analysis
+/custom_nodes/python-calcs/.git
+/custom_nodes/python-calcs/.gitignore
+/custom_nodes/python-calcs/__pycache__
+/custom_nodes/timeseries-nodes/.git
+/custom_nodes/timeseries-nodes/.gitignore
+/custom_nodes/timeseries-nodes/__pycache__
 !custom_nodes/example_node.py.example
 extra_model_paths.yaml
 /.vs

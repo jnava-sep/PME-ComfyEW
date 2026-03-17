@@ -7,6 +7,7 @@ from aiohttp import web
 import json
 import logging
 from functools import lru_cache
+from pathlib import Path
 
 from utils.json_util import merge_json_recursive
 
@@ -32,6 +33,59 @@ def safe_load_json_file(file_path: str) -> dict:
 
 
 class CustomNodeManager:
+    LOCAL_TEMPLATE_CONFIG_FILENAME = "template_library.json"
+
+    @classmethod
+    def _local_template_config_path(cls) -> str:
+        return os.path.join(
+            folder_paths.get_user_directory(),
+            "default",
+            cls.LOCAL_TEMPLATE_CONFIG_FILENAME,
+        )
+
+    @classmethod
+    def _load_local_template_config(cls) -> dict:
+        config_path = cls._local_template_config_path()
+        if not os.path.exists(config_path):
+            return {}
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            return cfg if isinstance(cfg, dict) else {}
+        except Exception as exc:
+            logging.warning("Failed to load local template library config '%s': %s", config_path, exc)
+            return {}
+
+    @classmethod
+    def _discover_local_template_categories(cls, user_root: str) -> list[tuple[str, str, list[str]]]:
+        cfg = cls._load_local_template_config()
+        library_root = Path(cfg.get("library_root") or os.path.join(user_root, "default", "template_library"))
+        categories_cfg = cfg.get("categories")
+        categories: list[tuple[str, str, list[str]]] = []
+
+        if isinstance(categories_cfg, list):
+            for entry in categories_cfg:
+                if not isinstance(entry, dict):
+                    continue
+                name = str(entry.get("name") or "").strip()
+                if not name:
+                    continue
+                rel = str(entry.get("path") or name).strip()
+                category_dir = (library_root / rel).resolve()
+                if not category_dir.exists() or not category_dir.is_dir():
+                    continue
+                workflows = sorted(p.stem for p in category_dir.glob("*.json"))
+                categories.append((name, str(category_dir), workflows))
+            return categories
+
+        if not library_root.exists() or not library_root.is_dir():
+            return categories
+
+        for category_dir in sorted(p for p in library_root.iterdir() if p.is_dir()):
+            workflows = sorted(p.stem for p in category_dir.glob("*.json"))
+            categories.append((category_dir.name, str(category_dir), workflows))
+        return categories
+
     @lru_cache(maxsize=1)
     def build_translations(self):
         """Load all custom nodes translations during initialization. Translations are
@@ -94,10 +148,34 @@ class CustomNodeManager:
     def add_routes(self, routes, webapp, loadedModules):
 
         example_workflow_folder_names = ["example_workflows", "example", "examples", "workflow", "workflows"]
+        local_template_cfg = self._load_local_template_config()
+        hide_auto_examples = bool(local_template_cfg.get("hide_auto_discovered_examples", False))
+        local_categories = self._discover_local_template_categories(folder_paths.get_user_directory())
+        for display_name, category_dir, _ in local_categories:
+            if "/" in display_name or "\\" in display_name:
+                logging.warning("Skipping local template category with invalid name '%s'", display_name)
+                continue
+            if os.path.isdir(category_dir):
+                webapp.add_routes(
+                    [
+                        web.static(
+                            "/api/workflow_templates/" + display_name,
+                            category_dir,
+                        )
+                    ]
+                )
 
         @routes.get("/workflow_templates")
         async def get_workflow_templates(request):
             """Returns a web response that contains the map of custom_nodes names and their associated workflow templates. The ones without templates are omitted."""
+
+            workflow_templates_dict = {}
+
+            for display_name, _, workflows in local_categories:
+                workflow_templates_dict[display_name] = workflows
+
+            if hide_auto_examples:
+                return web.json_response(workflow_templates_dict)
 
             files = []
 
@@ -107,9 +185,7 @@ class CustomNodeManager:
                     matched_files = glob.glob(pattern)
                     files.extend(matched_files)
 
-            workflow_templates_dict = (
-                {}
-            )  # custom_nodes folder name -> example workflow names
+            # custom_nodes folder name -> example workflow names
             for file in files:
                 custom_nodes_name = os.path.basename(
                     os.path.dirname(os.path.dirname(file))
