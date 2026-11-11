@@ -153,6 +153,11 @@ except:
 
 if args.cpu:
     cpu_state = CPUState.CPU
+elif not directml_enabled and cpu_state != CPUState.MPS and not xpu_available and not npu_available and not mlu_available and not ixuca_available:
+    if not torch.cuda.is_available():
+        logging.info("No CUDA GPU detected; automatically falling back to CPU mode.")
+        cpu_state = CPUState.CPU
+        args.cpu = True
 
 def is_intel_xpu():
     global cpu_state
@@ -418,7 +423,7 @@ if torch.cuda.is_available() and torch.backends.cudnn.is_available() and Perform
     torch.backends.cudnn.benchmark = True
 
 try:
-    if torch_version_numeric >= (2, 5):
+    if torch_version_numeric >= (2, 5) and torch.cuda.is_available():
         torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(True)
 except:
     logging.warning("Warning, could not set allow_fp16_bf16_reduction_math_sdp")
