@@ -109,6 +109,18 @@ Open your browser to `http://127.0.0.1:8188`.
 
 ---
 
+## Engineering AI Assistants (`pme-gemini-nodes`)
+
+The workbench includes local engineering intelligence nodes in `custom_nodes/pme-gemini-nodes/` interfacing directly with the local Gemini CLI (`agentapi`) for non-generative, data-driven automation:
+
+* **Gemini Data Insights (`PME_DataInsightsNode` / `scripting/ai-gemini-DataInsights`):** Ingests raw telemetry and provides anomaly detection, threshold audits, and root-cause hypotheses.
+* **Gemini Py/Math Gen (`PME_PyMathGenNode` / `scripting/ai-gemini-PyMathGen`):** Generates ready-to-run calculation scripts for `PythonCalcNode` or math expressions from plain-language formulas.
+* **Gemini Report Gen (`PME_ReportGenNode` / `scripting/ai-gemini-Report`):** Synthesizes test runs, telemetry stats, and diagnostic notes into `.md` or `.html` reports saved directly to `output/`.
+
+*For detailed pin diagrams, node options, and wiring examples, see [`custom_nodes/pme-gemini-nodes/README.md`](custom_nodes/pme-gemini-nodes/README.md).*
+
+---
+
 ## Authoring Custom Calculations (`python-calcs`)
 
 To add an engineering calculation, create a Python file in `custom_nodes/python-calcs/scripts/` (e.g., `filter_signal.py`):
