@@ -10,6 +10,7 @@ from app.logger import setup_logger
 from app.assets.scanner import seed_assets
 import itertools
 import utils.extra_config
+import faulthandler
 import logging
 import sys
 from comfy_execution.progress import get_progress_state
@@ -27,6 +28,8 @@ if __name__ == "__main__":
     os.environ['DO_NOT_TRACK'] = '1'
 
 setup_logger(log_level=args.verbose, use_stdout=args.log_stdout)
+
+faulthandler.enable(file=sys.stderr, all_threads=False)
 
 if os.name == "nt":
     os.environ['MIMALLOC_PURGE_DELAY'] = '0'

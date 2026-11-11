@@ -13,6 +13,7 @@ import numpy as np
 import folder_paths
 from comfy.cli_args import args
 from comfy.comfy_types import IO
+from comfy_extras.nodes_math import MathExpressionNode
 
 def before_node_execution():
     pass
@@ -416,6 +417,7 @@ NODE_CLASS_MAPPINGS = {
     "StringRegexExtract": StringRegexExtractNode,
     "StringRegexReplace": StringRegexReplaceNode,
     "PreviewAny": PreviewAny,
+    "ComfyMathExpression": MathExpressionNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -438,6 +440,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "StringRegexExtract": "String/Regex Extract",
     "StringRegexReplace": "String/Regex Replace",
     "PreviewAny": "Preview (Any)",
+    "ComfyMathExpression": "Math Expression",
 }
 
 LOADED_MODULE_DIRS = {}
